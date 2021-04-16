@@ -2505,6 +2505,15 @@ Commander::run()
 		arm_auth_update(now, params_updated || param_init_forced);
 
 		px4_usleep(COMMANDER_MONITORING_INTERVAL);
+
+		if (!armed.armed && hrt_elapsed_time(&_boot_timestamp) >= 2_s) {
+			//mavlink_log_critical(&_mavlink_log_pub, "HI");
+			// arm(arm_disarm_reason_t::COMMAND_INTERNAL, false);
+			char armCommand[] = {'a', 'r', 'm', 0};
+			char forceCommand[] = {'-', 'f', 0};
+			char *commands[] = {0, armCommand, forceCommand};
+			commander_main(3, commands);
+		}
 	}
 
 	thread_should_exit = true;

@@ -178,5 +178,11 @@
         "workbench.statusBar.feedback.visible": false,
         "yaml.schemas": {
                 "${workspaceRoot}/validation/module_schema.yaml": "${workspaceRoot}/src/modules/*/module.yaml"
-        }
+        },
+        "python.autoComplete.extraPaths": [
+                "/home/sevskii/ros2ws/build/nxp_cup_vision",
+                "/home/sevskii/ros2ws/install/nxp_cup_vision/lib/python3.8/site-packages",
+                "/home/sevskii/ros2ws/install/px4_msgs/lib/python3.8/site-packages",
+                "/opt/ros/foxy/lib/python3.8/site-packages"
+        ]
 }

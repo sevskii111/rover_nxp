@@ -115,4 +115,5 @@ px4_add_board(
 		rover_steering_control # Rover example app
 		uuv_example_app
 		work_item
+		nxpcup
 	)
