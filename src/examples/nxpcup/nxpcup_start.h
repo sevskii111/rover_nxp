@@ -59,6 +59,7 @@
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/safety.h>
+#include <uORB/topics/debug_array.h>
 
 #endif /*NXPCUP_START_*/
 

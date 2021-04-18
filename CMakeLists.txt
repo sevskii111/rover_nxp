@@ -282,6 +282,10 @@ endif()
 # to the Python libs installed with the ROS distro
 if (NOT CATKIN_DEVEL_PREFIX)
 	find_package(PythonInterp 3)
+	#SET(PYTHON_INCLUDE_PATH /usr/include/python3.2mu)
+	#SET(PYTHON_LIBRARIES /usr/lib/libpython3.2mu.so)
+	SET(PYTHON_EXECUTABLE /usr/local/bin/python3)
+	#SET(PYTHON_INCLUDE_DIR  /usr/include/python3.2mu)
 	# We have a custom error message to tell users how to install python3.
 	if (NOT PYTHONINTERP_FOUND)
 		message(FATAL_ERROR "Python 3 not found. Please install Python 3:\n"

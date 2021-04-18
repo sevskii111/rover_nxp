@@ -84,6 +84,8 @@ struct Vector
 	uint8_t m_flags;
 };
 
+typedef Vector PixyVector;
+
 struct IntersectionLine
 {
 	uint8_t m_index;
