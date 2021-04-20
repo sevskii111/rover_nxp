@@ -49,16 +49,16 @@ static int daemon_task;             /* Handle of deamon task / thread */
 bool threadShouldExit = false;
 bool threadIsRunning = false;
 
-float speed = 0.1f;
+float speed = 0.f;
 float steer = 0;
 
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
 	// Converting steering value from percent to euler angle
-	control.steer *= 0.7f;//60.0f; //max turn angle 60 degree
+	control.steer *= 0.55f;//60.0f; //max turn angle 60 degree
 
 	// Converting steering value from percent to euler angle
-	control.steer *= -60.0f; //max turn angle 60 degree
+	control.steer *= 60.0f; //max turn angle 60 degree
 	control.steer *= (float)3.14159 / 180; // change to radians
 
 
@@ -77,84 +77,140 @@ void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 
 }
 
-float vector_len(const PixyVector& vector) {
-	return (vector.m_x0 - vector.m_x1) * (vector.m_x0 - vector.m_x1) + (vector.m_y0 - vector.m_y1) * (vector.m_y0 - vector.m_y1);
+float vector_len(const PixyVector &vector)
+{
+	return (vector.m_x0 - vector.m_x1) * (vector.m_x0 - vector.m_x1) + (vector.m_y0 - vector.m_y1) *
+	       (vector.m_y0 - vector.m_y1);
 }
 
 void swap(PixyVector *xp, PixyVector *yp)
 {
-    PixyVector temp = *xp;
-    *xp = *yp;
-    *yp = temp;
+	PixyVector temp = *xp;
+	*xp = *yp;
+	*yp = temp;
 }
 
 
 int PIXY_WIDTH = 72;
 int PIXY_HEIGHT = 52;
-void find_track_lines(PixyVector* lines, int line_count, PixyVector* result)
+void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int &lines_found)
 {
-    result[0] = result[1] = {};
+	result[0] = result[1] = {};
 	PixyVector sorted_lines[line_count];
-    memcpy(sorted_lines, lines, sizeof(sorted_lines));
-    int i, j;
-    for (i = 0; i < line_count-1; i++)
-        for (j = 0; j < line_count-i-1; j++)
-            if (vector_len(sorted_lines[j]) < vector_len(sorted_lines[j+1]))
-                swap(&sorted_lines[j], &sorted_lines[j+1]);
+	memcpy(sorted_lines, lines, sizeof(sorted_lines));
+	int i, j;
 
-    bool found_left = false;
-    bool found_right = false;
-    float right_max = PIXY_WIDTH / 3 * 2;
-    float left_max = PIXY_WIDTH - PIXY_WIDTH / 3 * 2;
-    for (i = 0;i < line_count;i++)
-    {
-        PixyVector& line = sorted_lines[i];
+	for (i = 0; i < line_count - 1; i++)
+		for (j = 0; j < line_count - i - 1; j++)
+			if (vector_len(sorted_lines[j]) < vector_len(sorted_lines[j + 1])) {
+				swap(&sorted_lines[j], &sorted_lines[j + 1]);
+			}
 
-        if (!found_left && line.m_x0 < right_max && line.m_x1 < right_max && line.m_x0 < line.m_x1)
-        {
-            memcpy(&result[0], &line, sizeof(line));
-            found_left = true;
-        }
-        else if (!found_right && line.m_x0 > left_max && line.m_x1 > left_max && line.m_x0 > line.m_x1)
-        {
-            memcpy(&result[1], &line, sizeof(line));
-            found_right = true;
-        }
-    }
+	bool found_left = false;
+	bool found_right = false;
+	float right_max = PIXY_WIDTH / 3 * 2;
+	float left_max = PIXY_WIDTH - PIXY_WIDTH / 3 * 2;
+	lines_found = 0;
+
+	for (i = 0; i < line_count; i++) {
+		PixyVector &line = sorted_lines[i];
+
+		if (!found_left && line.m_x0 < right_max && line.m_x0 < line.m_x1
+		    && line.m_y0 > PIXY_HEIGHT / 2) {
+			memcpy(&result[0], &line, sizeof(line));
+			found_left = true;
+			lines_found++;
+
+		} else if (!found_right && line.m_x0 > left_max && line.m_x0 > line.m_x1
+			   && line.m_y0 > PIXY_HEIGHT / 2) {
+			memcpy(&result[1], &line, sizeof(line));
+			found_right = true;
+			lines_found++;
+		}
+	}
 
 }
 
 PixyVector find_target_vector(PixyVector left_vector, PixyVector right_vector)
 {
-    PixyVector result;
-    result.m_x0 = PIXY_WIDTH / 2;
-    result.m_y0 = PIXY_HEIGHT;
-    result.m_y1 = PIXY_HEIGHT / 2;
+	PixyVector result;
 
-    if (left_vector.m_x0 == 0 && left_vector.m_x1 == 0) {
-        result.m_x1 = right_vector.m_x1 - PIXY_WIDTH / 2 ;
-    } else if (right_vector.m_x0 == 0 && right_vector.m_x1 == 0) {
-        result.m_x1 = left_vector.m_x1 + PIXY_WIDTH / 2;
-    } else {
-        result.m_x1 = (left_vector.m_x1 + right_vector.m_x1) / 2;
-    }
-    return result;
+	uint8_t offset = 0;
+	float bias_coeff = 0.3f;
+	uint8_t bias_part = 5;
+
+	if (left_vector.m_x0 == 0 && left_vector.m_x1 == 0 && right_vector.m_x0 == 0 && right_vector.m_x1 == 0) {
+		result.m_y0 = right_vector.m_y0;
+		result.m_x0 = right_vector.m_x0;
+		result.m_x1 = right_vector.m_x1;
+		result.m_y1 = right_vector.m_y1;
+
+	} else if (left_vector.m_x0 == 0 && left_vector.m_x1 == 0) {
+		result.m_y0 = right_vector.m_y0;
+		result.m_x0 = right_vector.m_x0;
+		result.m_x1 = right_vector.m_x1 - offset;
+		result.m_y1 = right_vector.m_y1;
+
+	} else if (right_vector.m_x0 == 0 && right_vector.m_x1 == 0) {
+		result.m_y0 = left_vector.m_y0;
+		result.m_x0 = left_vector.m_x0;
+		result.m_x1 = left_vector.m_x1 + offset;
+		result.m_y1 = left_vector.m_y1;
+
+	} else {
+		result.m_y0 = PIXY_HEIGHT;
+		result.m_y1 = PIXY_HEIGHT / 2;
+		result.m_x0 = PIXY_WIDTH / 2;
+		result.m_x1 = (left_vector.m_x1 + right_vector.m_x1) / 2;
+	}
+
+	//if (right_vector.m_x0 != 0 && right_vector.m_x0 < PIXY_WIDTH * (bias_part - 1) / bias_part) {
+	//result.m_x1 += bias_coeff * (right_vector.m_x0 - PIXY_WIDTH * (bias_part - 1) / bias_part) / (PIXY_WIDTH / bias_part);
+	//result.m_x1 -= bias_coeff * (PIXY_WIDTH - right_vector.m_x0) / PIXY_WIDTH;
+	//result.m_x1 -= PIXY_WIDTH / 4;
+	//result.m_x0 = PIXY_WIDTH / 2;
+	//result.m_x1 = PIXY_WIDTH / 2;
+	int part = PIXY_WIDTH / bias_part;
+
+
+	if (right_vector.m_x0 != 0) {
+		int diff = (PIXY_WIDTH - right_vector.m_x0 + part);
+		result.m_x1 += bias_coeff * diff * diff / (1.0f - part);
+	}
+
+	//}
+
+	//if (left_vector.m_x0 != 0 && left_vector.m_x0 > PIXY_WIDTH * 1 / bias_part) {
+	//result.m_x1 += bias_coeff * (left_vector.m_x0 - PIXY_WIDTH * 1 / bias_part) / (PIXY_WIDTH / bias_part);
+	//result.m_x1 += bias_coeff * (right_vector.m_x0) / PIXY_WIDTH;
+	//result.m_x1 += PIXY_WIDTH / 4;
+	//result
+	if (left_vector.m_x0 != 0) {
+		int diff = (left_vector.m_x0 + part);
+		result.m_x1 -= bias_coeff * diff * diff / (1.0f - part);
+	}
+
+	//}
+
+	return result;
 }
 
-float my_abs(float x) {
-    if (x > 0) {
-        return x;
-    } else {
-        return -x;
-    }
+float my_abs(float x)
+{
+	if (x > 0) {
+		return x;
+
+	} else {
+		return -x;
+	}
 }
 
 int race_thread_main(int argc, char **argv)
 {
 	threadIsRunning = true;
 
-	#ifndef ROVER_INIT_VALUES
-	#define ROVER_INIT_Values
+#ifndef ROVER_INIT_VALUES
+#define ROVER_INIT_Values
 
 	/* Publication of uORB messages */
 	uORB::Publication<vehicle_control_mode_s>		_control_mode_pub{ORB_ID(vehicle_control_mode)};
@@ -178,13 +234,13 @@ int race_thread_main(int argc, char **argv)
 	Pixy2 pixy;
 	bool wait = 1;		// needed for waiting for valid data
 	usleep(5000);		// give pixy time to init
-	#endif
+#endif
 
 	struct debug_array_s dbg_array = {};
 	dbg_array.id = 1;
 	strncpy(dbg_array.name, "dbg_array", 10);
 	orb_advert_t pub_dbg_array = orb_advertise(ORB_ID(debug_array), &dbg_array);
-    float max_steer_per_second = 1;//1e-6;//0.1;
+	float max_steer_per_second = 7.5;//1e-6;//0.1;
 
 	if (pixy.init() == 0) {
 
@@ -194,56 +250,74 @@ int race_thread_main(int argc, char **argv)
 		//int TOTAL_VECTORS_TO_REPORT = 8;
 		//int curr_vector_to_report = 0;
 		//bool report_vector_start = true;
-        float curr_steer = 0;
-        hrt_abstime last_update = hrt_absolute_time();
+		float curr_steer = 0;
+		hrt_abstime last_update = hrt_absolute_time();
+
 		while (1) {
 
 			safety_sub.copy(&safety);				// request Safety swutch state
 			safety.safety_off = 1;
 			pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
-            PixyVector trackLines[2];
+			PixyVector trackLines[2];
 
 			dbg_array.data[0] = pixy.line.numVectors;
-			for (int i = 0;i < pixy.line.numVectors;i++) {
+
+			for (int i = 0; i < pixy.line.numVectors; i++) {
 				dbg_array.data[1 + i * 4] = pixy.line.vectors[i].m_x0;
 				dbg_array.data[2 + i * 4] = pixy.line.vectors[i].m_y0;
 				dbg_array.data[3 + i * 4] = pixy.line.vectors[i].m_x1;
 				dbg_array.data[4 + i * 4] = pixy.line.vectors[i].m_y1;
 			}
 
-            find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines);
+			int lines_found;
+			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found);
 
 
-            for (int i = 0;i < 2;i++) {
+			for (int i = 0; i < 2; i++) {
 				dbg_array.data[1 + (i + pixy.line.numVectors) * 4] = trackLines[i].m_x0;
 				dbg_array.data[2 + (i + pixy.line.numVectors) * 4] = trackLines[i].m_y0;
 				dbg_array.data[3 + (i + pixy.line.numVectors) * 4] = trackLines[i].m_x1;
 				dbg_array.data[4 + (i + pixy.line.numVectors) * 4] = trackLines[i].m_y1;
 			}
 
-            PixyVector target_vector = find_target_vector(trackLines[0], trackLines[1]);
+			PixyVector target_vector = find_target_vector(trackLines[0], trackLines[1]);
 
-            dbg_array.data[1 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x0;
-            dbg_array.data[2 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y0;
-            dbg_array.data[3 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x1;
-            dbg_array.data[4 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y1;
+			dbg_array.data[1 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x0;
+			dbg_array.data[2 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y0;
+			dbg_array.data[3 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x1;
+			dbg_array.data[4 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y1;
 
-            float target_steer = std::atan(1.f * (target_vector.m_x1 - target_vector.m_x0) / (target_vector.m_y1 - target_vector.m_y0));
-            dbg_array.data[5 + (2 + pixy.line.numVectors) * 4] = target_steer;
-            float steer_diff = target_steer - curr_steer;
-            hrt_abstime curr_time = hrt_absolute_time();
-            float max_steer = (double)max_steer_per_second * (curr_time - last_update) * 1e-6;
-            last_update = curr_time;
-            if (my_abs(steer_diff) < max_steer) {
-                curr_steer += steer_diff;
-            } else {
-                if (steer_diff > 0) {
-                    curr_steer += max_steer;
-                } else {
-                    curr_steer -= max_steer;
-                }
-            }
-            dbg_array.data[6 + (2 + pixy.line.numVectors) * 4] = curr_steer;
+			float target_steer = std::atan(1.f * (target_vector.m_x1 - target_vector.m_x0) / (target_vector.m_y1 -
+						       target_vector.m_y0));
+
+			if (target_vector.m_x0 == target_vector.m_x1 && target_vector.m_y0 == target_vector.m_y1) {
+				target_steer = 0;
+			}
+
+			dbg_array.data[5 + (2 + pixy.line.numVectors) * 4] = target_steer;
+			float steer_diff = target_steer - curr_steer;
+			hrt_abstime curr_time = hrt_absolute_time();
+			float max_steer = (double)max_steer_per_second * (curr_time - last_update) * 1e-6;
+
+			if (lines_found < 2) {
+				max_steer /= 2;
+			}
+
+			last_update = curr_time;
+
+			if (my_abs(steer_diff) < max_steer) {
+				curr_steer += steer_diff;
+
+			} else {
+				if (steer_diff > 0) {
+					curr_steer += max_steer;
+
+				} else {
+					curr_steer -= max_steer;
+				}
+			}
+
+			dbg_array.data[6 + (2 + pixy.line.numVectors) * 4] = curr_steer;
 
 			switch (safety.safety_off) {
 			case 0:
@@ -253,12 +327,13 @@ int race_thread_main(int argc, char **argv)
 				_control_mode.flag_control_velocity_enabled	= true;
 				_control_mode.flag_control_position_enabled	= true;
 
-				pixy.setLED(0,0,0);		// Pixy: reset RGB led
-				pixy.setLamp(false,false);	// Pixy: reset upper leds
+				pixy.setLED(0, 0, 0);		// Pixy: reset RGB led
+				pixy.setLamp(false, false);	// Pixy: reset upper leds
 				// reset PWM outputs
 				motorControl.speed = 0.0f;
 				motorControl.steer = 0.0f;
 				break;
+
 			case 1:
 				// Setting vehicle to attitude control mode
 				_control_mode.flag_control_manual_enabled 	= false;
@@ -267,19 +342,37 @@ int race_thread_main(int argc, char **argv)
 				_control_mode.flag_control_position_enabled	= false;
 
 				start = true;			// create your own start condition
-				pixy.setLED(0,0,255);		// Pixy: set RGB led to blue
-				pixy.setLamp(true,false);	// Pixy: sets upper led
+				pixy.setLED(0, 0, 255);		// Pixy: set RGB led to blue
+
+				if (lines_found == 0) {
+					pixy.setLamp(false, false);	// Pixy: sets upper led
+
+				} else if (lines_found == 1) {
+					pixy.setLamp(true, false);	// Pixy: sets upper led
+
+				} else {
+					pixy.setLamp(false, true);	// Pixy: sets upper led
+				}
 
 				if (start) {
 					//motorControl = raceTrack(pixy);
-                    motorControl.speed = 0.05f;
+					if (my_abs(curr_steer) < 0.5f) {
+						motorControl.speed = 0.2f;//0.05f;
+
+					} else {
+						motorControl.speed = 0.1f;
+					}
+
 					motorControl.steer = curr_steer;
+
 				} else {
 					motorControl.speed = speed;
 					motorControl.steer = steer;
 				}
+
 				break;
 			}
+
 			roverSteerSpeed(motorControl, _att_sp);		// setting values for speed and steering to attitude setpoints
 
 			// Publishing all
@@ -315,6 +408,7 @@ int race_thread_main(int argc, char **argv)
 			}
 		}
 	}
+
 	return 0;
 }
 
@@ -364,13 +458,13 @@ int nxpcup_main(int argc, char *argv[])
 	}
 
 	if (!strcmp(argv[1], "speed")) {
-			speed = atof(argv[2]);
-			return 0;
+		speed = atof(argv[2]);
+		return 0;
 	}
 
 	if (!strcmp(argv[1], "steer")) {
-			steer = atof(argv[2]);
-			return 0;
+		steer = atof(argv[2]);
+		return 0;
 	}
 
 	PX4_WARN("usage: race {start|stop|status}\n");

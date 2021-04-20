@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--baudrate", "-b", dest="baudrate", type=int,
                       help="Mavlink port baud rate (default=57600)", default=57600)
     args = parser.parse_args()
-
+    args.port = "0.0.0.0:14550"
 
     if args.port == None:
         if sys.platform == "darwin":

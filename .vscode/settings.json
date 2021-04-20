@@ -190,5 +190,6 @@
                 "/home/sevskii/ros2ws/install/nxp_cup_vision/lib/python3.8/site-packages",
                 "/home/sevskii/ros2ws/install/px4_msgs/lib/python3.8/site-packages",
                 "/opt/ros/foxy/lib/python3.8/site-packages"
-        ]
+        ],
+        "python.pythonPath": "/opt/homebrew/Caskroom/miniforge/base/bin/python"
 }
