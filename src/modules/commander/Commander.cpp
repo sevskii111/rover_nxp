@@ -433,6 +433,10 @@ Commander::arm_disarm(bool arm, bool run_preflight_checks, orb_advert_t *mavlink
 {
 	transition_result_t arming_res = TRANSITION_NOT_CHANGED;
 
+	if (!arm) {
+		return arming_res;
+	}
+
 	// Transition the armed state. By passing mavlink_log_pub to arming_state_transition it will
 	// output appropriate error messages if the state cannot transition.
 	arming_res = arming_state_transition(&status,

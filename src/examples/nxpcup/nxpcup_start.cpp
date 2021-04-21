@@ -51,11 +51,23 @@ bool threadIsRunning = false;
 
 float speed = 0.f;
 float steer = 0;
+bool start = true;			// create your own start condition
+
+
+//AUTOPILOT PARAMS
+float FAST_SPEED = 0.4f;
+float SLOW_SPEED = 0.1f;
+float STEER_MULT = 1.f;
+float BIAS = 0.3f;
+int BIAS_PARTS = 5;
+int MAX_PARTS = 2;
+int MAX_LIMIT = 1;
+float MAX_STEER_PER_SECOND = 15.f;
 
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
 	// Converting steering value from percent to euler angle
-	control.steer *= 0.55f;//60.0f; //max turn angle 60 degree
+	control.steer *= 0.7f;//60.0f; //max turn angle 60 degree
 
 	// Converting steering value from percent to euler angle
 	control.steer *= 60.0f; //max turn angle 60 degree
@@ -90,10 +102,15 @@ void swap(PixyVector *xp, PixyVector *yp)
 	*yp = temp;
 }
 
+double deg2rad(double degrees)
+{
+	return degrees * 4.0 * std::atan(1.0) / 180.0;
+}
 
 int PIXY_WIDTH = 72;
 int PIXY_HEIGHT = 52;
-void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int &lines_found)
+void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int &lines_found,
+		      float curr_steer)
 {
 	result[0] = result[1] = {};
 	PixyVector sorted_lines[line_count];
@@ -108,25 +125,40 @@ void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int
 
 	bool found_left = false;
 	bool found_right = false;
-	float right_max = PIXY_WIDTH / 3 * 2;
-	float left_max = PIXY_WIDTH - PIXY_WIDTH / 3 * 2;
+	float right_max = PIXY_WIDTH / MAX_PARTS * MAX_LIMIT;
+	float left_max = PIXY_WIDTH - PIXY_WIDTH / MAX_PARTS * MAX_LIMIT;
 	lines_found = 0;
+	float theta = deg2rad(-curr_steer * 30);
 
-	for (i = 0; i < line_count; i++) {
-		PixyVector &line = sorted_lines[i];
+	float cs = cos(theta);
+	float sn = sin(theta);
 
-		if (!found_left && line.m_x0 < right_max && line.m_x0 < line.m_x1
-		    && line.m_y0 > PIXY_HEIGHT / 2) {
-			memcpy(&result[0], &line, sizeof(line));
-			found_left = true;
-			lines_found++;
+	for (int anywhere = 0; anywhere <= 1; anywhere++) {
+		for (i = 0; i < line_count; i++) {
+			PixyVector &line = sorted_lines[i];
 
-		} else if (!found_right && line.m_x0 > left_max && line.m_x0 > line.m_x1
-			   && line.m_y0 > PIXY_HEIGHT / 2) {
-			memcpy(&result[1], &line, sizeof(line));
-			found_right = true;
-			lines_found++;
+			float rotated_x1 = line.m_x1 * cs - line.m_y1 * sn;
+			//float rotated_y1 = line.m_x1 * sn + line.m_y1 * cs;
+
+			if (!found_left && line.m_x0 < right_max
+			    && line.m_x0 < rotated_x1
+			    && (anywhere || line.m_y0 > PIXY_HEIGHT / 2)) {
+				memcpy(&result[0], &line, sizeof(line));
+				found_left = true;
+				lines_found++;
+
+			} else if (!found_right && line.m_x0 > left_max
+				   && line.m_x0 > rotated_x1
+				   && (anywhere || line.m_y0 > PIXY_HEIGHT / 2)) {
+				memcpy(&result[1], &line, sizeof(line));
+				found_right = true;
+				lines_found++;
+			}
 		}
+	}
+
+	if (lines_found == 2 && result[0].m_x0 > result[1].m_x0) {
+		swap(&result[0], &result[1]);
 	}
 
 }
@@ -136,30 +168,31 @@ PixyVector find_target_vector(PixyVector left_vector, PixyVector right_vector)
 	PixyVector result;
 
 	uint8_t offset = 0;
-	float bias_coeff = 0.3f;
-	uint8_t bias_part = 5;
+	float bias_coeff = BIAS;
+	uint8_t bias_part = BIAS_PARTS;
+	result.m_y0 = PIXY_HEIGHT - 1;
 
 	if (left_vector.m_x0 == 0 && left_vector.m_x1 == 0 && right_vector.m_x0 == 0 && right_vector.m_x1 == 0) {
-		result.m_y0 = right_vector.m_y0;
+
 		result.m_x0 = right_vector.m_x0;
 		result.m_x1 = right_vector.m_x1;
 		result.m_y1 = right_vector.m_y1;
 
 	} else if (left_vector.m_x0 == 0 && left_vector.m_x1 == 0) {
-		result.m_y0 = right_vector.m_y0;
+		//result.m_y0 = right_vector.m_y0;
 		result.m_x0 = right_vector.m_x0;
 		result.m_x1 = right_vector.m_x1 - offset;
 		result.m_y1 = right_vector.m_y1;
 
 	} else if (right_vector.m_x0 == 0 && right_vector.m_x1 == 0) {
-		result.m_y0 = left_vector.m_y0;
+		//result.m_y0 = left_vector.m_y0;
 		result.m_x0 = left_vector.m_x0;
 		result.m_x1 = left_vector.m_x1 + offset;
 		result.m_y1 = left_vector.m_y1;
 
 	} else {
-		result.m_y0 = PIXY_HEIGHT;
-		result.m_y1 = PIXY_HEIGHT / 2;
+		//result.m_y0 = PIXY_HEIGHT;
+		result.m_y1 = right_vector.m_y1 / 2 + left_vector.m_y1 / 2;
 		result.m_x0 = PIXY_WIDTH / 2;
 		result.m_x1 = (left_vector.m_x1 + right_vector.m_x1) / 2;
 	}
@@ -228,7 +261,6 @@ int race_thread_main(int argc, char **argv)
 	roverControl motorControl;
 
 	/* Start condition of the race */
-	bool start = 0;		// Create your own start condition
 
 	/* Pixy2 Instance */
 	Pixy2 pixy;
@@ -240,7 +272,6 @@ int race_thread_main(int argc, char **argv)
 	dbg_array.id = 1;
 	strncpy(dbg_array.name, "dbg_array", 10);
 	orb_advert_t pub_dbg_array = orb_advertise(ORB_ID(debug_array), &dbg_array);
-	float max_steer_per_second = 7.5;//1e-6;//0.1;
 
 	if (pixy.init() == 0) {
 
@@ -254,11 +285,14 @@ int race_thread_main(int argc, char **argv)
 		hrt_abstime last_update = hrt_absolute_time();
 
 		while (1) {
+			float max_steer_per_second = MAX_STEER_PER_SECOND;//1e-6;//0.1;
 
 			safety_sub.copy(&safety);				// request Safety swutch state
 			safety.safety_off = 1;
 			pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
 			PixyVector trackLines[2];
+
+
 
 			dbg_array.data[0] = pixy.line.numVectors;
 
@@ -270,8 +304,53 @@ int race_thread_main(int argc, char **argv)
 			}
 
 			int lines_found;
-			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found);
+			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found, curr_steer);
 
+			if (false && lines_found == 1) {
+				int offset = 5;
+				int len = 5;
+				uint8_t r[len * 2];
+				uint8_t g[len * 2];
+				uint8_t b[len * 2];
+				PixyVector foundLine;
+
+				if (trackLines[0].m_x0 == trackLines[0].m_x1) {
+					foundLine = trackLines[1];
+
+				} else {
+					foundLine = trackLines[0];
+				}
+
+				int left_sum = 0;
+				int right_sum = 0;
+
+				for (int i = 0; i < len; i++) {
+					int left_pos = foundLine.m_x0 - offset - i;
+
+					if (left_pos < 0) {
+						left_pos = 0;
+					}
+
+					int right_pos = foundLine.m_x0 + offset + i;
+
+					if (right_pos >= PIXY_WIDTH) {
+						right_pos = PIXY_WIDTH - 1;
+					}
+
+					pixy.video.getRGB(left_pos, foundLine.m_y0, &r[i], &g[i], &b[i], false);
+					pixy.video.getRGB(right_pos, foundLine.m_y0, &r[len + i], &g[len + i], &b[len + i], false);
+					left_sum += r[i] + g[i] + b[i];
+					right_sum += r[len + i] + g[len + i] + b[len + i];
+				}
+
+				if (left_sum > right_sum && trackLines[1].m_x0 == trackLines[1].m_x1) {
+					swap(&trackLines[0], &trackLines[1]);
+				}
+
+				if (right_sum > left_sum && trackLines[0].m_x0 == trackLines[0].m_x1) {
+					swap(&trackLines[0], &trackLines[1]);
+				}
+			}
 
 			for (int i = 0; i < 2; i++) {
 				dbg_array.data[1 + (i + pixy.line.numVectors) * 4] = trackLines[i].m_x0;
@@ -282,13 +361,16 @@ int race_thread_main(int argc, char **argv)
 
 			PixyVector target_vector = find_target_vector(trackLines[0], trackLines[1]);
 
+
 			dbg_array.data[1 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x0;
 			dbg_array.data[2 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y0;
 			dbg_array.data[3 + (2 + pixy.line.numVectors) * 4] = target_vector.m_x1;
 			dbg_array.data[4 + (2 + pixy.line.numVectors) * 4] = target_vector.m_y1;
 
 			float target_steer = std::atan(1.f * (target_vector.m_x1 - target_vector.m_x0) / (target_vector.m_y1 -
-						       target_vector.m_y0));
+						       target_vector.m_y0)) / 1.4;
+
+			target_steer *= STEER_MULT;
 
 			if (target_vector.m_x0 == target_vector.m_x1 && target_vector.m_y0 == target_vector.m_y1) {
 				target_steer = 0;
@@ -299,8 +381,11 @@ int race_thread_main(int argc, char **argv)
 			hrt_abstime curr_time = hrt_absolute_time();
 			float max_steer = (double)max_steer_per_second * (curr_time - last_update) * 1e-6;
 
-			if (lines_found < 2) {
+			if (lines_found == 1) {
 				max_steer /= 2;
+
+			} else if (lines_found == 0) {
+				max_steer /= 10;
 			}
 
 			last_update = curr_time;
@@ -341,33 +426,27 @@ int race_thread_main(int argc, char **argv)
 				_control_mode.flag_control_velocity_enabled 	= false;
 				_control_mode.flag_control_position_enabled	= false;
 
-				start = true;			// create your own start condition
 				pixy.setLED(0, 0, 255);		// Pixy: set RGB led to blue
+				pixy.setLamp(true, true);
 
 				if (lines_found == 0) {
-					pixy.setLamp(false, false);	// Pixy: sets upper led
+					//pixy.setLamp(false, false);	// Pixy: sets upper led
 
 				} else if (lines_found == 1) {
-					pixy.setLamp(true, false);	// Pixy: sets upper led
+					//pixy.setLamp(true, false);	// Pixy: sets upper led
 
 				} else {
-					pixy.setLamp(false, true);	// Pixy: sets upper led
+					//pixy.setLamp(false, true);	// Pixy: sets upper led
 				}
 
 				if (start) {
 					//motorControl = raceTrack(pixy);
-					if (my_abs(curr_steer) < 0.5f) {
-						motorControl.speed = 0.2f;//0.05f;
-
-					} else {
-						motorControl.speed = 0.1f;
-					}
-
+					motorControl.speed = SLOW_SPEED + (1 - my_abs(curr_steer)) * (FAST_SPEED - SLOW_SPEED);
 					motorControl.steer = curr_steer;
 
 				} else {
 					motorControl.speed = speed;
-					motorControl.steer = steer;
+					motorControl.steer = curr_steer;
 				}
 
 				break;
@@ -466,6 +545,52 @@ int nxpcup_main(int argc, char *argv[])
 		steer = atof(argv[2]);
 		return 0;
 	}
+
+	if (!strcmp(argv[1], "k")) {
+		start = !start;
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "fs")) {
+		FAST_SPEED = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "ss")) {
+		SLOW_SPEED = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "sm")) {
+		STEER_MULT = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "b")) {
+		BIAS = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "bp")) {
+		BIAS_PARTS = atoi(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "mp")) {
+		MAX_PARTS = atoi(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "ml")) {
+		MAX_LIMIT = atoi(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "ms")) {
+		MAX_STEER_PER_SECOND = atof(argv[2]);
+		return 0;
+	}
+
 
 	PX4_WARN("usage: race {start|stop|status}\n");
 	return 1;
