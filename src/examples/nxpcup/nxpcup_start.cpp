@@ -52,20 +52,26 @@ bool threadIsRunning = false;
 float speed = 0.f;
 float steer = 0;
 bool start = true;			// create your own start condition
+bool debug = true;
 
 
 //AUTOPILOT PARAMS
-float FAST_SPEED = 0.4f;
-float SLOW_SPEED = 0.1f;
-float STEER_MULT = 1.f;
-float BIAS = 0.3f;
-int BIAS_PARTS = 5;
-int MAX_PARTS = 2;
-int MAX_LIMIT = 1;
-float MAX_STEER_PER_SECOND = 15.f;
+float FAST_SPEED = 0.5f;
+float SLOW_SPEED = 0.2f;
+float STEER_MULT = 1.3f;
+float BIAS = 0.05f;
+int BIAS_PARTS = 2;
+int MAX_PARTS = 3;
+int MAX_LIMIT = 2;
+float MAX_STEER_PER_SECOND = 50.f;
+float LINE_MEMORY = 300.f;
+int VERTICAL_PARTS = 2;
+float THRESHOLD = 0.7f;
 
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
+
+	control.steer += 0.05f;
 	// Converting steering value from percent to euler angle
 	control.steer *= 0.7f;//60.0f; //max turn angle 60 degree
 
@@ -89,6 +95,16 @@ void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 
 }
 
+float my_abs(float x)
+{
+	if (x > 0) {
+		return x;
+
+	} else {
+		return -x;
+	}
+}
+
 float vector_len(const PixyVector &vector)
 {
 	return (vector.m_x0 - vector.m_x1) * (vector.m_x0 - vector.m_x1) + (vector.m_y0 - vector.m_y1) *
@@ -110,7 +126,7 @@ double deg2rad(double degrees)
 int PIXY_WIDTH = 72;
 int PIXY_HEIGHT = 52;
 void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int &lines_found,
-		      float curr_steer)
+		      float curr_steer, PixyVector *last_track_lines, hrt_abstime *last_track_lines_seen)
 {
 	result[0] = result[1] = {};
 	PixyVector sorted_lines[line_count];
@@ -123,34 +139,55 @@ void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int
 				swap(&sorted_lines[j], &sorted_lines[j + 1]);
 			}
 
+	for (i = 0; i < line_count; i++) {
+		PixyVector &line = lines[i];
+
+		if (line.m_y1 > line.m_y0) {
+			int t1 = line.m_x0;
+			int t2 = line.m_y0;
+			line.m_x0 = line.m_x1;
+			line.m_y0 = line.m_y1;
+			line.m_x1 = t1;
+			line.m_y1 = t2;
+		}
+	}
+
 	bool found_left = false;
 	bool found_right = false;
 	float right_max = PIXY_WIDTH / MAX_PARTS * MAX_LIMIT;
 	float left_max = PIXY_WIDTH - PIXY_WIDTH / MAX_PARTS * MAX_LIMIT;
 	lines_found = 0;
-	float theta = deg2rad(-curr_steer * 30);
+	float theta = deg2rad(curr_steer * 30);
 
 	float cs = cos(theta);
 	float sn = sin(theta);
 
-	for (int anywhere = 0; anywhere <= 1; anywhere++) {
+	hrt_abstime curr_time = hrt_absolute_time();
+
+	for (int vertical_part = VERTICAL_PARTS - 1; vertical_part >= 0 && lines_found == 0; vertical_part--) {
 		for (i = 0; i < line_count; i++) {
 			PixyVector &line = sorted_lines[i];
+			int dx = line.m_x1 - line.m_x0;
+			int dy = line.m_y1 - line.m_y0;
 
-			float rotated_x1 = line.m_x1 * cs - line.m_y1 * sn;
+			float rotated_x1 =  line.m_x0 + dx * cs - dy * sn;
 			//float rotated_y1 = line.m_x1 * sn + line.m_y1 * cs;
 
 			if (!found_left && line.m_x0 < right_max
 			    && line.m_x0 < rotated_x1
-			    && (anywhere || line.m_y0 > PIXY_HEIGHT / 2)) {
+			    && (line.m_y0 > PIXY_HEIGHT * vertical_part / VERTICAL_PARTS)
+			    && my_abs((int)line.m_x0 - last_track_lines[0].m_x0) < LINE_MEMORY * (curr_time - last_track_lines_seen[0]) / 1e6f) {
 				memcpy(&result[0], &line, sizeof(line));
+				//result[0].m_x1 = rotated_x1;
 				found_left = true;
 				lines_found++;
 
 			} else if (!found_right && line.m_x0 > left_max
 				   && line.m_x0 > rotated_x1
-				   && (anywhere || line.m_y0 > PIXY_HEIGHT / 2)) {
+				   && (line.m_y0 > PIXY_HEIGHT * vertical_part / VERTICAL_PARTS)
+				   &&  my_abs((int)line.m_x0 - last_track_lines[1].m_x0) < LINE_MEMORY * (curr_time - last_track_lines_seen[1]) / 1e6f) {
 				memcpy(&result[1], &line, sizeof(line));
+				//result[1].m_x1 = rotated_x1;
 				found_right = true;
 				lines_found++;
 			}
@@ -228,15 +265,7 @@ PixyVector find_target_vector(PixyVector left_vector, PixyVector right_vector)
 	return result;
 }
 
-float my_abs(float x)
-{
-	if (x > 0) {
-		return x;
 
-	} else {
-		return -x;
-	}
-}
 
 int race_thread_main(int argc, char **argv)
 {
@@ -283,6 +312,9 @@ int race_thread_main(int argc, char **argv)
 		//bool report_vector_start = true;
 		float curr_steer = 0;
 		hrt_abstime last_update = hrt_absolute_time();
+		PixyVector last_track_lines[2];
+		last_track_lines[0] = last_track_lines[1] = {};
+		hrt_abstime last_track_lines_seen[2];
 
 		while (1) {
 			float max_steer_per_second = MAX_STEER_PER_SECOND;//1e-6;//0.1;
@@ -304,7 +336,8 @@ int race_thread_main(int argc, char **argv)
 			}
 
 			int lines_found;
-			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found, curr_steer);
+			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found, curr_steer,
+					 last_track_lines, last_track_lines_seen);
 
 			if (false && lines_found == 1) {
 				int offset = 5;
@@ -382,10 +415,20 @@ int race_thread_main(int argc, char **argv)
 			float max_steer = (double)max_steer_per_second * (curr_time - last_update) * 1e-6;
 
 			if (lines_found == 1) {
-				max_steer /= 2;
+				//max_steer /= 2;
 
 			} else if (lines_found == 0) {
 				max_steer /= 10;
+			}
+
+			if (trackLines[0].m_x0 != trackLines[0].m_x1) {
+				last_track_lines[0] = trackLines[0];
+				last_track_lines_seen[0] = hrt_absolute_time();
+			}
+
+			if (trackLines[1].m_x0 != trackLines[1].m_x1) {
+				last_track_lines[1] = trackLines[1];
+				last_track_lines_seen[1] = hrt_absolute_time();
 			}
 
 			last_update = curr_time;
@@ -439,9 +482,19 @@ int race_thread_main(int argc, char **argv)
 					//pixy.setLamp(false, true);	// Pixy: sets upper led
 				}
 
-				if (start) {
+				if (debug) {
+					motorControl.speed = speed;
+					motorControl.steer = steer;
+
+				} else if (start) {
 					//motorControl = raceTrack(pixy);
-					motorControl.speed = SLOW_SPEED + (1 - my_abs(curr_steer)) * (FAST_SPEED - SLOW_SPEED);
+					float speedup = (THRESHOLD - my_abs(curr_steer)) * (FAST_SPEED - SLOW_SPEED);
+
+					if (speedup < 0) {
+						speedup = 0;
+					}
+
+					motorControl.speed = SLOW_SPEED + speedup;
 					motorControl.steer = curr_steer;
 
 				} else {
@@ -551,6 +604,11 @@ int nxpcup_main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "d")) {
+		debug = !debug;
+		return 0;
+	}
+
 	if (!strcmp(argv[1], "fs")) {
 		FAST_SPEED = atof(argv[2]);
 		return 0;
@@ -591,6 +649,20 @@ int nxpcup_main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "lm")) {
+		LINE_MEMORY = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "t")) {
+		THRESHOLD = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "vp")) {
+		VERTICAL_PARTS = atoi(argv[2]);
+		return 0;
+	}
 
 	PX4_WARN("usage: race {start|stop|status}\n");
 	return 1;
