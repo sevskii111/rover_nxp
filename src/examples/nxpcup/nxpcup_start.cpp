@@ -52,24 +52,30 @@ bool threadIsRunning = false;
 float speed = 0.f;
 float steer = 0;
 bool start = true;			// create your own start condition
-bool debug = true;
+bool debug = false;
 
 
 //AUTOPILOT PARAMS
 float FAST_SPEED = 0.4f;
 float SLOW_SPEED = 0.2f;
 float STEER_MULT = 1.3f;
-float BIAS = 0.3f;
+float BIAS = 0.06f; // 0.05 ok 0.06 mb better
 int BIAS_PARTS = 2;
 int MAX_PARTS = 5;
-int MAX_LIMIT = 3;
-float MAX_STEER_PER_SECOND = 200.f;
+int MAX_LIMIT = 4; // 4 ok
+float MAX_STEER_PER_SECOND = 300.f; // 275-300
 float LINE_MEMORY = 300.f;
 int VERTICAL_PARTS = 2;
 float THRESHOLD = 0.3f;
-float STEER_FIX = -0.01f;
+float STEER_FIX = 0.23f;
 bool LIGHT = true;
 
+/*
+ Dimas changes
+ bias 0.05 ml 4 - 6 rings in both sides
+ old values ml 3 b 0.3
+ ms 250 b 0.05 ml 4
+*/
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
 
