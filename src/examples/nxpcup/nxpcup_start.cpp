@@ -56,19 +56,38 @@ bool debug = false;
 
 
 //AUTOPILOT PARAMS
-float FAST_SPEED = 0.4f;
-float SLOW_SPEED = 0.2f;
+float FAST_SPEED = 0.5f;
+float SLOW_SPEED = 0.22f;
 float STEER_MULT = 1.3f;
 float BIAS = 0.06f; // 0.05 ok 0.06 mb better
 int BIAS_PARTS = 2;
 int MAX_PARTS = 5;
 int MAX_LIMIT = 4; // 4 ok
 float MAX_STEER_PER_SECOND = 300.f; // 275-300
+float MAX_SPEEDUP_PER_SECOND = 0.1f;
 float LINE_MEMORY = 300.f;
 int VERTICAL_PARTS = 2;
 float THRESHOLD = 0.3f;
-float STEER_FIX = 0.23f;
+float STEER_FIX = 0.18f; // -0.01f
 bool LIGHT = true;
+
+static const int fpsFrameBufferSize = 10;
+hrt_abstime fpsFrameBuffer[fpsFrameBufferSize];
+int currFrameInd;
+
+hrt_abstime lastTick = 0;
+
+hrt_abstime tickTime() {
+	hrt_abstime now = hrt_absolute_time();
+	if (lastTick == 0) {
+		lastTick = now;
+		return 0;
+	} else {
+		hrt_abstime diff = now - lastTick;
+		lastTick = now;
+		return diff;
+	}
+}
 
 /*
  Dimas changes
@@ -242,7 +261,13 @@ void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int
 	}
 
 	if (lines_found == 2 && result[0].m_x0 > result[1].m_x0) {
-		swap(&result[0], &result[1]);
+		if (vector_len(result[0]) > vector_len(result[1])) {
+			result[1].m_x0 = 0;
+		} else {
+			result[0].m_x0 =  0;
+		}
+		lines_found = 1;
+		//swap(&result[0], &result[1]);
 	}
 
 }
@@ -280,6 +305,7 @@ PixyVector find_target_vector(PixyVector left_vector, PixyVector right_vector)
 		result.m_x0 = PIXY_WIDTH / 2;
 		result.m_x1 = (left_vector.m_x1 + right_vector.m_x1) / 2;
 	}
+
 
 	//if (right_vector.m_x0 != 0 && right_vector.m_x0 < PIXY_WIDTH * (bias_part - 1) / bias_part) {
 	//result.m_x1 += bias_coeff * (right_vector.m_x0 - PIXY_WIDTH * (bias_part - 1) / bias_part) / (PIXY_WIDTH / bias_part);
@@ -358,17 +384,21 @@ int race_thread_main(int argc, char **argv)
 		//int curr_vector_to_report = 0;
 		//bool report_vector_start = true;
 		float curr_steer = 0;
+		float curr_speedup = 0;
 		hrt_abstime last_update = hrt_absolute_time();
 		PixyVector last_track_lines[2];
 		last_track_lines[0] = last_track_lines[1] = {};
 		hrt_abstime last_track_lines_seen[2];
 
 		while (1) {
+			tickTime();
+
 			float max_steer_per_second = MAX_STEER_PER_SECOND;//1e-6;//0.1;
 
 			safety_sub.copy(&safety);				// request Safety swutch state
 			safety.safety_off = 1;
 			pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
+			hrt_abstime pixy_response_time = tickTime();
 			PixyVector trackLines[2];
 
 			int vectorsLimited = pixy.line.numVectors;
@@ -378,8 +408,6 @@ int race_thread_main(int argc, char **argv)
 			}
 
 			dbg_array.data[0] = vectorsLimited;
-
-
 
 			for (int i = 0; i < vectorsLimited; i++) {
 				dbg_array.data[1 + i * 4] = pixy.line.vectors[i].m_x0;
@@ -391,6 +419,7 @@ int race_thread_main(int argc, char **argv)
 			int lines_found;
 			find_track_lines(pixy.line.vectors, pixy.line.numVectors, trackLines, lines_found, curr_steer,
 					 last_track_lines, last_track_lines_seen);
+			hrt_abstime lines_found_time = tickTime();
 
 			if (false && lines_found == 1) {
 				int offset = 5;
@@ -446,7 +475,7 @@ int race_thread_main(int argc, char **argv)
 			}
 
 			PixyVector target_vector = find_target_vector(trackLines[0], trackLines[1]);
-
+			hrt_abstime target_vector_found_time = tickTime();
 
 			dbg_array.data[1 + (2 + vectorsLimited) * 4] = target_vector.m_x0;
 			dbg_array.data[2 + (2 + vectorsLimited) * 4] = target_vector.m_y0;
@@ -465,13 +494,30 @@ int race_thread_main(int argc, char **argv)
 			dbg_array.data[5 + (2 + vectorsLimited) * 4] = target_steer;
 			float steer_diff = target_steer - curr_steer;
 			hrt_abstime curr_time = hrt_absolute_time();
+
+			//FPS_COUNT
+			// float fps = 0;
+
+			// if (currFrameInd > 0) {
+			// 	if (currFrameInd < fpsFrameBufferSize) {
+			// 		fps = currFrameInd / ((curr_time - fpsFrameBuffer[0]) / 1e6);
+
+			// 	} else {
+			// 		fps = fpsFrameBufferSize / ((curr_time - fpsFrameBuffer[(currFrameInd + fpsFrameBufferSize + 1) % fpsFrameBufferSize]) /
+			// 					    1e6);
+			// 	}
+			// }
+
+			fpsFrameBuffer[currFrameInd++ % fpsFrameBufferSize] = curr_time;
+			//FPS_COUNT_END
+
 			float max_steer = (double)max_steer_per_second * (curr_time - last_update) * 1e-6;
 
 			if (lines_found == 1) {
 				//max_steer /= 2;
 
 			} else if (lines_found == 0) {
-				max_steer = 1;
+				max_steer = 0;
 			}
 
 			if (trackLines[0].m_x0 != trackLines[0].m_x1) {
@@ -483,8 +529,6 @@ int race_thread_main(int argc, char **argv)
 				last_track_lines[1] = trackLines[1];
 				last_track_lines_seen[1] = hrt_absolute_time();
 			}
-
-			last_update = curr_time;
 
 			if (my_abs(steer_diff) < max_steer) {
 				curr_steer += steer_diff;
@@ -498,7 +542,15 @@ int race_thread_main(int argc, char **argv)
 				}
 			}
 
+			hrt_abstime end_time = tickTime();
+
 			dbg_array.data[6 + (2 + vectorsLimited) * 4] = curr_steer;
+			dbg_array.data[7 + (2 + vectorsLimited) * 4] = curr_speedup;
+
+			dbg_array.data[8 + (2 + vectorsLimited) * 4] = pixy_response_time;
+			dbg_array.data[9 + (2 + vectorsLimited) * 4] = lines_found_time;
+			dbg_array.data[10 + (2 + vectorsLimited) * 4] = target_vector_found_time;
+			dbg_array.data[11 + (2 + vectorsLimited) * 4] = end_time;
 
 			switch (safety.safety_off) {
 			case 0:
@@ -563,7 +615,22 @@ int race_thread_main(int argc, char **argv)
 						speedup = 0;
 					}
 
-					motorControl.speed = SLOW_SPEED + speedup;
+					float speedup_diff = speedup - curr_speedup;
+					if (speedup_diff > 0) {
+						float max_speedup = (double)MAX_SPEEDUP_PER_SECOND * (curr_time - last_update) * 1e-6;
+						if (speedup_diff > max_speedup) {
+							curr_speedup += max_speedup;
+						} else {
+							curr_speedup += speedup_diff;
+						}
+					} else {
+						curr_speedup = speedup;
+					}
+
+					dbg_array.data[7 + (2 + vectorsLimited) * 4] = curr_speedup;
+
+
+					motorControl.speed = SLOW_SPEED + curr_speedup;
 					motorControl.steer = curr_steer;
 
 				} else {
@@ -576,6 +643,7 @@ int race_thread_main(int argc, char **argv)
 
 			roverSteerSpeed(motorControl, _att_sp);		// setting values for speed and steering to attitude setpoints
 
+			last_update = curr_time;
 			// Publishing all
 			_control_mode.timestamp = hrt_absolute_time();
 			_control_mode_pub.publish(_control_mode);
@@ -586,7 +654,9 @@ int race_thread_main(int argc, char **argv)
 			// orb_publish(ORB_ID(debug_vect), pub_dbg_vect, &dbg_vect);
 
 			dbg_array.timestamp = hrt_absolute_time();
-			orb_publish(ORB_ID(debug_array), pub_dbg_array, &dbg_array);
+			if (currFrameInd % 1 == 0) {
+				orb_publish(ORB_ID(debug_array), pub_dbg_array, &dbg_array);
+			}
 
 			if (threadShouldExit) {
 				threadIsRunning = false;
@@ -715,6 +785,11 @@ int nxpcup_main(int argc, char *argv[])
 
 	if (!strcmp(argv[1], "ms")) {
 		MAX_STEER_PER_SECOND = atof(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "msu")) {
+		MAX_SPEEDUP_PER_SECOND = atof(argv[2]);
 		return 0;
 	}
 
