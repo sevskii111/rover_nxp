@@ -56,20 +56,21 @@ bool debug = false;
 
 
 //AUTOPILOT PARAMS
-float FAST_SPEED = 0.5f;
-float SLOW_SPEED = 0.22f;
-float STEER_MULT = 1.3f;
-float BIAS = 0.06f; // 0.05 ok 0.06 mb better
+float FAST_SPEED = 0.6f;
+float SLOW_SPEED = 0.27f;
+float STEER_MULT = 1.5f;
+float BIAS = 0.05f; // 0.05 ok 0.06 mb better
 int BIAS_PARTS = 2;
 int MAX_PARTS = 5;
 int MAX_LIMIT = 4; // 4 ok
 float MAX_STEER_PER_SECOND = 300.f; // 275-300
-float MAX_SPEEDUP_PER_SECOND = 0.1f;
-float LINE_MEMORY = 300.f;
+float MAX_SPEEDUP_PER_SECOND = 0.5f;
+float LINE_MEMORY = 10000.f;
 int VERTICAL_PARTS = 2;
 float THRESHOLD = 0.3f;
-float STEER_FIX = 0.18f; // -0.01f
+float STEER_FIX = 0.12f; // -0.01f
 bool LIGHT = true;
+
 
 static const int fpsFrameBufferSize = 10;
 hrt_abstime fpsFrameBuffer[fpsFrameBufferSize];
@@ -139,6 +140,18 @@ float my_max(float a, float b)
 	}
 
 	return b;
+}
+
+float vector_angle(const PixyVector &vector)
+{
+	float dx = vector.m_x1 - vector.m_x0;
+	float dy = vector.m_y1 - vector.m_y0;
+	return atan2(dy, dx);
+}
+
+float dist(float x1, float y1, float x2, float y2)
+{
+	return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
 }
 
 float vector_len(const PixyVector &vector)
@@ -260,15 +273,29 @@ void find_track_lines(PixyVector *lines, int line_count, PixyVector *result, int
 		}
 	}
 
-	if (lines_found == 2 && result[0].m_x0 > result[1].m_x0) {
-		if (vector_len(result[0]) > vector_len(result[1])) {
-			result[1].m_x0 = 0;
+	if (lines_found == 2 && ((result[0].m_x0 > result[1].m_x0) ||
+	(dist(result[0].m_x1, result[0].m_y1, result[1].m_x0, result[1].m_y0) < 10) ||
+	(dist(result[1].m_x1, result[1].m_y1, result[0].m_x0, result[0].m_y0) < 10) ||
+	(dist(result[0].m_x1, result[0].m_y1, result[0].m_x0, result[0].m_y0) < 10))) {
+		PixyVector line;
+		if (abs(vector_angle(result[0])) < abs(vector_angle(result[1]))) {
+			result[1] = {};
+			line = result[0];
+			result[0] = {};
 		} else {
-			result[0].m_x0 =  0;
+			result[0] = {};
+			line = result[1];
+			result[1] = {};
 		}
 		lines_found = 1;
-		//swap(&result[0], &result[1]);
+
+		if (line.m_x0 > line.m_x1) {
+			result[1] = line;
+		} else {
+			result[0] = line;
+		}
 	}
+
 
 }
 
@@ -395,7 +422,7 @@ int race_thread_main(int argc, char **argv)
 
 			float max_steer_per_second = MAX_STEER_PER_SECOND;//1e-6;//0.1;
 
-			safety_sub.copy(&safety);				// request Safety swutch state
+			safety_sub.copy(&safety);				// request Safety switch state
 			safety.safety_off = 1;
 			pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
 			hrt_abstime pixy_response_time = tickTime();
